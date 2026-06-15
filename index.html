@@ -173,7 +173,32 @@
     letter-spacing: 1.5px;
     color: var(--accent);
     margin-bottom: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
   }
+  .refresh-btn {
+    font-family: 'DM Sans', sans-serif;
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0;
+    color: var(--text3);
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 3px 10px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .refresh-btn:hover { color: var(--text); border-color: var(--text2); }
+  .refresh-btn.spinning { color: var(--accent); border-color: var(--accent); }
+
+  /* PAST MATCHES ARCHIVE */
+  .past-matches-archive { margin-top: 16px; border-radius: 10px; border: 1px solid var(--border); overflow: hidden; }
+  .past-matches-summary { list-style: none; display: flex; align-items: center; padding: 10px 16px; font-family: 'DM Sans', sans-serif; font-size: 13px; font-weight: 600; color: var(--text3); cursor: pointer; background: var(--surface2); user-select: none; }
+  .past-matches-summary::before { content: '+ '; font-size: 14px; margin-right: 6px; }
+  .past-matches-archive[open] .past-matches-summary::before { content: '- '; }
+  .past-matches-body { padding: 0 0 8px; }
 
   /* LEADERBOARD */
   .leaderboard-header {
@@ -924,7 +949,7 @@
         <div class="stat-box"><div class="stat-box-val" id="statYourPts">0</div><div class="stat-box-label">Your Pts</div></div>
       </div>
       <div class="card">
-        <div class="card-title">STANDINGS</div>
+        <div class="card-title">STANDINGS<button class="refresh-btn" id="refreshBtn" onclick="refreshLeaderboard()">Refresh</button></div>
         <div class="leaderboard-header">
           <div>#</div><div>Player</div><div style="text-align:center">Played</div><div style="text-align:center">Exact</div><div style="text-align:center">Pts</div>
         </div>
@@ -1799,6 +1824,10 @@ function renderMatchCard(m, pred, result, showPredInput) {
     }
   }
 
+  // Show everyone's picks on My Predictions page once time-locked
+  const timeLocked = new Date() >= new Date(new Date(m.utc).getTime() - 60*60*1000);
+  const picksSection = showPredInput && timeLocked ? renderPicksSection(m, timeLocked, result) : '';
+
   return `<div class="match-card ${statusClass}" id="card_${m.id}">
     <div class="match-top">
       <div class="match-teams">
@@ -1821,6 +1850,7 @@ function renderMatchCard(m, pred, result, showPredInput) {
       <span class="tz-line"><b>BST</b> ${tz.bst}</span>
     </div>
     ${predSection}
+    ${picksSection}
   </div>`;
 }
 
@@ -1886,19 +1916,14 @@ function renderSchedule() {
   let matches = [...MATCHES];
   if (schedFilter !== 'all') matches = matches.filter(m => m.phase === schedFilter || (schedFilter === 'Final' && (m.phase === 'Final' || m.phase === '3rd Place')));
 
-  if (schedSort === 'date') matches.sort((a, b) => new Date(a.utc) - new Date(b.utc));
-
   const container = document.getElementById('scheduleList');
-  let html = '';
-  let lastLabel = null;
-  matches.forEach(m => {
-    const label = schedSort === 'date' ? matchDateLabel(m.utc) : (m.phase === 'Group Stage' ? `Group ${m.group}` : m.phase);
-    if (label !== lastLabel) { html += `<div class="group-label">${label}</div>`; lastLabel = label; }
+  const now = new Date();
+
+  function buildMatchHtml(m) {
     const tz = utcToZones(m.utc);
     const result = db.results && db.results[m.id];
-    // Predictions are hidden until this match's prediction window closes (1 hour before kick-off)
-    const timeLocked = new Date() >= new Date(new Date(m.utc).getTime() - 60*60*1000);
-    html += `<div class="match-card">
+    const timeLocked = now >= new Date(new Date(m.utc).getTime() - 60*60*1000);
+    return `<div class="match-card">
       <div class="match-top">
         <div class="match-teams">
           <span class="team-name">${teamNameOnly(m.home)}</span>
@@ -1922,7 +1947,52 @@ function renderSchedule() {
       <div style="font-size:11px;color:var(--text3);margin-top:6px;">${m.venue}</div>
       ${renderPicksSection(m, timeLocked, result)}
     </div>`;
-  });
+  }
+
+  let html = '';
+
+  if (schedSort === 'date') {
+    // Split into upcoming (kick-off in future) and past (kick-off already passed)
+    const upcoming = matches.filter(m => new Date(m.utc) > now).sort((a, b) => new Date(a.utc) - new Date(b.utc));
+    const past = matches.filter(m => new Date(m.utc) <= now).sort((a, b) => new Date(b.utc) - new Date(a.utc));
+
+    // Upcoming matches with date headers
+    let lastLabel = null;
+    upcoming.forEach(m => {
+      const label = matchDateLabel(m.utc);
+      if (label !== lastLabel) { html += `<div class="group-label">${label}</div>`; lastLabel = label; }
+      html += buildMatchHtml(m);
+    });
+
+    if (!upcoming.length && !past.length) {
+      html = '<div style="color:var(--text3);font-size:13px;padding:20px 0;">No matches in this view.</div>';
+    }
+
+    // Past matches in a collapsed archive
+    if (past.length) {
+      let pastHtml = '';
+      let lastPastLabel = null;
+      past.forEach(m => {
+        const label = matchDateLabel(m.utc);
+        if (label !== lastPastLabel) { pastHtml += `<div class="group-label">${label}</div>`; lastPastLabel = label; }
+        pastHtml += buildMatchHtml(m);
+      });
+      html += `<details class="past-matches-archive">
+        <summary class="past-matches-summary">Past Matches (${past.length})</summary>
+        <div class="past-matches-body">${pastHtml}</div>
+      </details>`;
+    }
+  } else {
+    // Group sort: existing behaviour unchanged
+    let lastLabel = null;
+    matches.forEach(m => {
+      const label = m.phase === 'Group Stage' ? `Group ${m.group}` : m.phase;
+      if (label !== lastLabel) { html += `<div class="group-label">${label}</div>`; lastLabel = label; }
+      html += buildMatchHtml(m);
+    });
+    if (!html) html = '<div style="color:var(--text3);font-size:13px;padding:20px 0;">No matches in this view.</div>';
+  }
+
   container.innerHTML = html;
 }
 
@@ -2314,8 +2384,15 @@ function hashPin(pin) {
 }
 function escapeHtml(str) { return str.replace(/'/g,"&#39;").replace(/"/g,"&quot;"); }
 
-// Auto-refresh DB every 2 minutes when on the leaderboard and the tab is visible.
-// Pausing on hidden tabs avoids wasting JSONBin requests on backgrounded windows.
+async function refreshLeaderboard() {
+  const btn = document.getElementById('refreshBtn');
+  if (btn) { btn.classList.add('spinning'); btn.textContent = 'Refreshing...'; btn.disabled = true; }
+  await loadDB();
+  renderLeaderboard();
+  if (btn) { btn.classList.remove('spinning'); btn.textContent = 'Refresh'; btn.disabled = false; }
+}
+
+// Auto-refresh kept at 24 hours as a safety net. Players use the Refresh button instead.
 setInterval(async () => {
   if (currentPage === 'leaderboard'
       && document.getElementById('appScreen').style.display !== 'none'
@@ -2323,7 +2400,7 @@ setInterval(async () => {
     await loadDB();
     renderLeaderboard();
   }
-}, 6000000);
+}, 86400000);
 </script>
 </body>
 </html>
