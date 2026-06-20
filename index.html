@@ -1412,8 +1412,34 @@ async function saveDB(db) {
 // Local cache
 let _db = null;
 function getDB() { return _db || {}; }
-async function loadDB() {
+
+// localStorage cache: avoids an API read on every page load.
+// 15-minute TTL. Manual refresh clears it. safeMutate updates it after writes.
+const _CACHE_KEY = 'wc2026_db_cache';
+const _CACHE_TTL = 15 * 60 * 1000;
+function _readCache() {
+  try {
+    const raw = localStorage.getItem(_CACHE_KEY);
+    if (!raw) return null;
+    const { ts, data } = JSON.parse(raw);
+    if (Date.now() - ts > _CACHE_TTL) { localStorage.removeItem(_CACHE_KEY); return null; }
+    return data;
+  } catch { return null; }
+}
+function _writeCache(data) {
+  try { localStorage.setItem(_CACHE_KEY, JSON.stringify({ ts: Date.now(), data })); } catch {}
+}
+function _clearCache() {
+  try { localStorage.removeItem(_CACHE_KEY); } catch {}
+}
+
+async function loadDB(skipCache) {
+  if (!skipCache) {
+    const cached = _readCache();
+    if (cached) { _db = cached; return _db; }
+  }
   _db = await fetchDB();
+  if (_db) _writeCache(_db);
   return _db;
 }
 async function persistDB() { await saveDB(_db); }
@@ -1438,6 +1464,7 @@ function safeMutate(mutator) {
     mutator(merged);                         // apply only our change
     await saveDB(merged);                    // write merged result
     _db = merged;                            // refresh local cache
+    _writeCache(merged);                     // update localStorage cache
     return merged;
   });
   // Keep the chain alive even if one write fails
@@ -1654,6 +1681,16 @@ function doLogout() {
 
 // ─── PAGES ───────────────────────────────────────────────────────────────────
 let currentPage = 'leaderboard';
+
+// Scroll to the first upcoming match anchor. Only called on page navigation,
+// not on filter/sort changes, so the user's scroll position is preserved when filtering.
+function scrollToUpcoming() {
+  requestAnimationFrame(() => {
+    const el = document.getElementById('upcomingAnchor');
+    if (el) el.scrollIntoView({ behavior: 'instant', block: 'start' });
+  });
+}
+
 function showPage(page) {
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
@@ -1663,8 +1700,8 @@ function showPage(page) {
   tabs.forEach(t => { if (t.textContent.toLowerCase().includes(page.split('').slice(0,4).join(''))) t.classList.add('active'); });
   currentPage = page;
   if (page === 'leaderboard') renderLeaderboard();
-  if (page === 'predictions') renderPredictions();
-  if (page === 'schedule') renderSchedule();
+  if (page === 'predictions') { renderPredictions(); scrollToUpcoming(); }
+  if (page === 'schedule') { renderSchedule(); scrollToUpcoming(); }
   if (page === 'admin') renderAdmin();
 }
 
@@ -1765,20 +1802,36 @@ function renderPredictions() {
   if (predFilter === 'locked') matches = matches.filter(m => isLocked(m));
   if (predFilter === 'predicted') matches = matches.filter(m => myPreds[m.id]);
 
-  if (predSort === 'date') matches.sort((a, b) => new Date(a.utc) - new Date(b.utc));
-
   const container = document.getElementById('predictionsList');
+  const now = new Date();
   let html = '';
-  let lastKey = null;
-  matches.forEach(m => {
-    const label = predSort === 'date' ? matchDateLabel(m.utc) : (m.phase === 'Group Stage' ? `Group ${m.group}` : m.phase);
-    if (label !== lastKey) {
-      html += `<div class="group-label">${label}</div>`;
-      lastKey = label;
-    }
-    html += renderMatchCard(m, myPreds[m.id], db.results && db.results[m.id], true);
-  });
-  if (!html) html = '<div style="color:var(--text3);font-size:13px;padding:20px 0;">No matches in this view.</div>';
+
+  if (predSort === 'date') {
+    // All matches in chronological order. Insert scroll anchor before first upcoming match.
+    const sorted = matches.sort((a, b) => new Date(a.utc) - new Date(b.utc));
+    let lastKey = null;
+    let anchored = false;
+    sorted.forEach(m => {
+      const label = matchDateLabel(m.utc);
+      if (!anchored && new Date(m.utc) > now) {
+        html += '<div id="upcomingAnchor" style="scroll-margin-top:64px;"></div>';
+        anchored = true;
+      }
+      if (label !== lastKey) { html += `<div class="group-label">${label}</div>`; lastKey = label; }
+      html += renderMatchCard(m, myPreds[m.id], db.results && db.results[m.id], true);
+    });
+    if (!html) html = '<div style="color:var(--text3);font-size:13px;padding:20px 0;">No matches in this view.</div>';
+  } else {
+    // Group sort: existing behaviour unchanged
+    let lastKey = null;
+    matches.forEach(m => {
+      const label = m.phase === 'Group Stage' ? `Group ${m.group}` : m.phase;
+      if (label !== lastKey) { html += `<div class="group-label">${label}</div>`; lastKey = label; }
+      html += renderMatchCard(m, myPreds[m.id], db.results && db.results[m.id], true);
+    });
+    if (!html) html = '<div style="color:var(--text3);font-size:13px;padding:20px 0;">No matches in this view.</div>';
+  }
+
   container.innerHTML = html;
 }
 
@@ -1952,36 +2005,20 @@ function renderSchedule() {
   let html = '';
 
   if (schedSort === 'date') {
-    // Split into upcoming (kick-off in future) and past (kick-off already passed)
-    const upcoming = matches.filter(m => new Date(m.utc) > now).sort((a, b) => new Date(a.utc) - new Date(b.utc));
-    const past = matches.filter(m => new Date(m.utc) <= now).sort((a, b) => new Date(b.utc) - new Date(a.utc));
-
-    // Upcoming matches with date headers
+    // All matches in chronological order. Insert scroll anchor before first upcoming match.
+    const sorted = matches.sort((a, b) => new Date(a.utc) - new Date(b.utc));
     let lastLabel = null;
-    upcoming.forEach(m => {
+    let anchored = false;
+    sorted.forEach(m => {
       const label = matchDateLabel(m.utc);
+      if (!anchored && new Date(m.utc) > now) {
+        html += '<div id="upcomingAnchor" style="scroll-margin-top:64px;"></div>';
+        anchored = true;
+      }
       if (label !== lastLabel) { html += `<div class="group-label">${label}</div>`; lastLabel = label; }
       html += buildMatchHtml(m);
     });
-
-    if (!upcoming.length && !past.length) {
-      html = '<div style="color:var(--text3);font-size:13px;padding:20px 0;">No matches in this view.</div>';
-    }
-
-    // Past matches in a collapsed archive
-    if (past.length) {
-      let pastHtml = '';
-      let lastPastLabel = null;
-      past.forEach(m => {
-        const label = matchDateLabel(m.utc);
-        if (label !== lastPastLabel) { pastHtml += `<div class="group-label">${label}</div>`; lastPastLabel = label; }
-        pastHtml += buildMatchHtml(m);
-      });
-      html += `<details class="past-matches-archive">
-        <summary class="past-matches-summary">Past Matches (${past.length})</summary>
-        <div class="past-matches-body">${pastHtml}</div>
-      </details>`;
-    }
+    if (!html) html = '<div style="color:var(--text3);font-size:13px;padding:20px 0;">No matches in this view.</div>';
   } else {
     // Group sort: existing behaviour unchanged
     let lastLabel = null;
@@ -2387,7 +2424,8 @@ function escapeHtml(str) { return str.replace(/'/g,"&#39;").replace(/"/g,"&quot;
 async function refreshLeaderboard() {
   const btn = document.getElementById('refreshBtn');
   if (btn) { btn.classList.add('spinning'); btn.textContent = 'Refreshing...'; btn.disabled = true; }
-  await loadDB();
+  _clearCache();
+  await loadDB(true);
   renderLeaderboard();
   if (btn) { btn.classList.remove('spinning'); btn.textContent = 'Refresh'; btn.disabled = false; }
 }
