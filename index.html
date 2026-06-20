@@ -1702,7 +1702,7 @@ function showPage(page) {
   if (page === 'leaderboard') renderLeaderboard();
   if (page === 'predictions') { renderPredictions(); scrollToUpcoming(); }
   if (page === 'schedule') { renderSchedule(); scrollToUpcoming(); }
-  if (page === 'admin') renderAdmin();
+  if (page === 'admin') { renderAdmin(); scrollToAdminAnchor(); }
 }
 
 // ─── LEADERBOARD ─────────────────────────────────────────────────────────────
@@ -2207,14 +2207,13 @@ function renderAdminMatches() {
   const q = (document.getElementById('adminMatchSearch').value || '').toLowerCase();
   const container = document.getElementById('adminMatchList');
   const results = db.results || {};
+  const now = new Date();
   let html = '';
-  MATCHES.filter(m => {
-    if (!q) return new Date() >= new Date(new Date(m.utc).getTime() - 60*60*1000);
-    return m.home.toLowerCase().includes(q) || m.away.toLowerCase().includes(q) || m.phase.toLowerCase().includes(q);
-  }).slice(0, q ? 50 : 20).forEach(m => {
+
+  function buildAdminCard(m) {
     const res = results[m.id];
     const tz = utcToZones(m.utc);
-    html += `<div class="match-card" style="margin-bottom:8px;">
+    return `<div class="match-card" style="margin-bottom:8px;">
       <div class="match-top">
         <div class="match-teams">
           <span class="team-name">${teamNameOnly(m.home)}</span>
@@ -2241,9 +2240,47 @@ function renderAdminMatches() {
         ${res !== undefined ? `<button class="btn-danger" onclick="clearResult('${m.id}')">Clear</button>` : ''}
       </div>
     </div>`;
-  });
+  }
+
+  if (q) {
+    MATCHES.filter(m =>
+      m.home.toLowerCase().includes(q) || m.away.toLowerCase().includes(q) || m.phase.toLowerCase().includes(q)
+    ).forEach(m => { html += buildAdminCard(m); });
+  } else {
+    const locked = MATCHES
+      .filter(m => now >= new Date(new Date(m.utc).getTime() - 60*60*1000))
+      .sort((a, b) => new Date(a.utc) - new Date(b.utc));
+    let anchorId = null;
+    for (let i = locked.length - 1; i >= 0; i--) {
+      if (results[locked[i].id] === undefined) { anchorId = locked[i].id; break; }
+    }
+    let lastLabel = null;
+    locked.forEach(m => {
+      if (m.id === anchorId) {
+        html += '<div id="adminResultAnchor" style="scroll-margin-top:80px;"></div>';
+      }
+      const label = matchDateLabel(m.utc);
+      if (label !== lastLabel) {
+        html += `<div class="group-label">${label}</div>`;
+        lastLabel = label;
+      }
+      html += buildAdminCard(m);
+    });
+    if (!anchorId) {
+      html += '<div id="adminResultAnchor" style="scroll-margin-top:80px;"></div>';
+      html += '<div style="color:var(--text3);font-size:12px;padding:8px 0;">All results confirmed.</div>';
+    }
+  }
+
   if (!html) html = '<div style="color:var(--text3);font-size:13px;padding:10px 0;">No locked matches yet, or no search results.</div>';
   container.innerHTML = html;
+}
+
+function scrollToAdminAnchor() {
+  requestAnimationFrame(() => {
+    const el = document.getElementById('adminResultAnchor');
+    if (el) el.scrollIntoView({ behavior: 'instant', block: 'start' });
+  });
 }
 
 function renderAdminPlayers() {
