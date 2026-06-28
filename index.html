@@ -2459,4 +2459,97 @@ function importData(event) {
     if (!data || typeof data !== 'object' || !data.players) {
       showToast('That does not look like a WC2026 backup', 'error'); return;
     }
-    const pla
+
+    const players = Object.keys(data.players);
+    openModal(
+      'Restore backup?',
+      `This will replace ALL current data with the backup (${players.length} player${players.length !== 1 ? 's' : ''}). This cannot be undone.`,
+      async () => {
+        try {
+          await safeMutate(db => {
+            db.players      = data.players      || {};
+            db.predictions  = data.predictions  || {};
+            db.results      = data.results      || {};
+            db.teamOverrides = data.teamOverrides || {};
+            db.settings     = data.settings     || {};
+          });
+          await loadDB(true);
+          renderAdmin();
+          showToast('Backup restored successfully', 'success');
+        } catch(e) {
+          showToast('Restore failed. Try again.', 'error');
+        }
+      }
+    );
+  };
+  reader.readAsText(file);
+}
+
+async function resetPlayer(key, name) {
+  openModal('Reset Player', `Clear all predictions for ${name}? Their account stays.`, async () => {
+    try {
+      await safeMutate(db => { if (db.predictions) delete db.predictions[key]; });
+      showToast(`${name}'s predictions cleared`, 'success');
+      renderAdminPlayers();
+    } catch(e) { showToast('Reset failed. Try again.', 'error'); }
+  });
+}
+
+async function removePlayer(key, name) {
+  openModal('Remove Player', `Permanently remove ${name}? This cannot be undone.`, async () => {
+    try {
+      await safeMutate(db => {
+        if (db.players) delete db.players[key];
+        if (db.predictions) delete db.predictions[key];
+      });
+      showToast(`${name} removed`, 'success');
+      renderAdminPlayers();
+    } catch(e) { showToast('Remove failed. Try again.', 'error'); }
+  });
+}
+
+// ─── MODAL ───────────────────────────────────────────────────────────────────
+let _modalCallback = null;
+
+function openModal(title, message, onConfirm) {
+  _modalCallback = onConfirm;
+  document.getElementById('modalTitle').textContent = title;
+  document.getElementById('modalDesc').textContent = message;
+  document.getElementById('confirmModal').classList.add('show');
+  document.getElementById('modalConfirmBtn').onclick = confirmModal;
+}
+
+function closeModal() {
+  document.getElementById('confirmModal').classList.remove('show');
+  _modalCallback = null;
+}
+
+async function confirmModal() {
+  const cb = _modalCallback;
+  closeModal();
+  if (cb) await cb();
+}
+
+// ─── TOAST ───────────────────────────────────────────────────────────────────
+let _toastTimer = null;
+function showToast(message, type) {
+  const el = document.getElementById('toast');
+  if (!el) return;
+  clearTimeout(_toastTimer);
+  el.textContent = message;
+  el.className = 'toast show' + (type && type !== 'info' ? ' ' + type : '');
+  _toastTimer = setTimeout(() => { el.classList.remove('show'); }, 3000);
+}
+
+// ─── UTILS ───────────────────────────────────────────────────────────────────
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+</script>
+</body>
+</html>
