@@ -1068,7 +1068,7 @@
 // Leave both as empty strings to use the per-browser setup screen instead.
 const EMBEDDED_CONFIG = {
   masterKey: '$2a$10$axydpI4C12TVdjG06fvln.uKHSGdoeYaVM3PzBKR.okeqGpd5d.CW',
-  binId: '6a296781f5f4af5e29d841b3' 
+  binId: '6a21906fda38895dfe870b28'
 };
 
 const ADMIN_NAME_KEY = 'wc2026_admin';
@@ -2542,7 +2542,14 @@ function showToast(message, type) {
 }
 
 // ─── UTILS ───────────────────────────────────────────────────────────────────
-function normName(name) { return name.trim().toLowerCase().replace(/\s+/g, '_'); }
-function initials(name) { return name.split(/[\s_]+/).map(w=>w[0]||'').join('').toUpperCase().slice(0,2); }
-function hashPin(pin) {
-  // Si
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+</script>
+</body>
+</html>
