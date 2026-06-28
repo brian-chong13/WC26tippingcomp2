@@ -1,7 +1,3 @@
-https://raw.githubusercontent.com/brian-chong13/WC26tippingcomp2/88b2a0aa/index.html
-→ https://raw.githubusercontent.com/brian-chong13/WC26tippingcomp2/88b2a0aa/index.html
-Content-Type: text/plain; charset=utf-8
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -2132,4 +2128,354 @@ function renderKnockoutEditor() {
     ? koMatches.filter(m => {
         const h = (overrides[m.id + '_h'] || m.home).toLowerCase();
         const a = (overrides[m.id + '_a'] || m.away).toLowerCase();
-        return
+        return h.includes(q) || a.includes(q) || m.phase.toLowerCase().includes(q);
+      })
+    : koMatches;
+
+  const container = document.getElementById('knockoutEditorList');
+  if (!container) return;
+
+  let html = '';
+  let lastPhase = null;
+  filtered.forEach(m => {
+    if (m.phase !== lastPhase) {
+      html += `<div style="font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--text3);margin:12px 0 6px;padding-top:8px;border-top:1px solid var(--border);">${m.phase}</div>`;
+      lastPhase = m.phase;
+    }
+    const homeVal = overrides[m.id + '_h'] !== undefined ? overrides[m.id + '_h'] : m.home;
+    const awayVal = overrides[m.id + '_a'] !== undefined ? overrides[m.id + '_a'] : m.away;
+    const tz = utcToZones(m.utc);
+    html += `<div class="match-card" style="margin-bottom:8px;">
+      <div style="font-size:11px;color:var(--text3);margin-bottom:8px;">${tz.aet} AET &nbsp;|&nbsp; ${m.venue}</div>
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+        <input class="form-input" style="flex:1;min-width:100px;padding:7px 10px;font-size:13px;" id="ko_h_${m.id}" value="${escapeHtml(homeVal)}" placeholder="Home team">
+        <span style="color:var(--text3);font-family:'DM Mono',monospace;font-size:13px;flex-shrink:0;">v</span>
+        <input class="form-input" style="flex:1;min-width:100px;padding:7px 10px;font-size:13px;" id="ko_a_${m.id}" value="${escapeHtml(awayVal)}" placeholder="Away team">
+        <button class="btn-confirm" style="flex-shrink:0;" onclick="saveKnockoutTeams('${m.id}')">Save</button>
+        ${(overrides[m.id + '_h'] !== undefined || overrides[m.id + '_a'] !== undefined)
+          ? `<button class="btn-warning" style="flex-shrink:0;" onclick="resetKnockoutTeams('${m.id}')">Reset</button>`
+          : ''}
+      </div>
+    </div>`;
+  });
+  if (!html) html = '<div style="color:var(--text3);font-size:13px;padding:10px 0;">No knockout fixtures match your search.</div>';
+  container.innerHTML = html;
+}
+
+async function saveKnockoutTeams(matchId) {
+  const hEl = document.getElementById('ko_h_' + matchId);
+  const aEl = document.getElementById('ko_a_' + matchId);
+  if (!hEl || !aEl) return;
+  const home = hEl.value.trim();
+  const away = aEl.value.trim();
+  if (!home || !away) { showToast('Both team names required', 'error'); return; }
+  try {
+    await safeMutate(db => {
+      db.teamOverrides[matchId + '_h'] = home;
+      db.teamOverrides[matchId + '_a'] = away;
+    });
+    // Update live MATCHES so the rest of the app reflects immediately
+    const match = MATCHES.find(m => m.id === matchId);
+    if (match) { match.home = home; match.away = away; }
+    showToast(`Updated: ${home} v ${away}`, 'success');
+    renderKnockoutEditor();
+  } catch(e) {
+    showToast('Save failed. Try again.', 'error');
+  }
+}
+
+async function resetKnockoutTeams(matchId) {
+  try {
+    await safeMutate(db => {
+      if (db.teamOverrides) {
+        delete db.teamOverrides[matchId + '_h'];
+        delete db.teamOverrides[matchId + '_a'];
+      }
+    });
+    // Restore the original placeholder name in the live MATCHES array
+    const match = MATCHES.find(m => m.id === matchId);
+    if (match) { match.home = match.origHome; match.away = match.origAway; }
+    showToast('Team names reset to placeholder', 'success');
+    renderKnockoutEditor();
+  } catch(e) {
+    showToast('Reset failed', 'error');
+  }
+}
+
+function renderAdminMatches() {
+  const db = getDB();
+  const q = (document.getElementById('adminMatchSearch').value || '').toLowerCase();
+  const container = document.getElementById('adminMatchList');
+  const results = db.results || {};
+  const now = new Date();
+  let html = '';
+
+  function buildAdminCard(m) {
+    const res = results[m.id];
+    const tz = utcToZones(m.utc);
+    return `<div class="match-card" style="margin-bottom:8px;">
+      <div class="match-top">
+        <div class="match-teams">
+          <span class="team-name">${teamNameOnly(m.home)}</span>
+          <div class="vs-group">
+            <span class="vs-flag">${teamFlag(m.home)}</span>
+            <div class="vs-box ${res?'final':''}">${res ? `${res.home} - ${res.away}` : 'v'}</div>
+            <span class="vs-flag">${teamFlag(m.away)}</span>
+          </div>
+          <span class="team-name right">${teamNameOnly(m.away)}</span>
+        </div>
+      </div>
+      <div class="match-meta" style="margin-bottom:4px;">
+        <span class="match-badge ${res?'badge-final':'badge-locked'}">${res?'Final':'Locked'}</span>
+        <span class="match-time">AET ${tz.aet}</span>
+      </div>
+      <div class="admin-score-row">
+        <span class="admin-badge-label">ADMIN</span>
+        <div class="score-input-group">
+          <input class="score-input" type="number" min="0" max="99" id="ar_h_${m.id}" value="${res !== undefined ? res.home : ''}" placeholder="H" style="width:44px">
+          <span class="score-sep">:</span>
+          <input class="score-input" type="number" min="0" max="99" id="ar_a_${m.id}" value="${res !== undefined ? res.away : ''}" placeholder="A" style="width:44px">
+        </div>
+        <button class="btn-confirm" onclick="confirmResult('${m.id}','${escapeHtml(m.home)}','${escapeHtml(m.away)}')">${res !== undefined ? 'Update' : 'Confirm'}</button>
+        ${res !== undefined ? `<button class="btn-danger" onclick="clearResult('${m.id}')">Clear</button>` : ''}
+      </div>
+    </div>`;
+  }
+
+  if (q) {
+    MATCHES.filter(m =>
+      m.home.toLowerCase().includes(q) || m.away.toLowerCase().includes(q) || m.phase.toLowerCase().includes(q)
+    ).forEach(m => { html += buildAdminCard(m); });
+  } else {
+    const locked = MATCHES
+      .filter(m => now >= new Date(new Date(m.utc).getTime() - 60*60*1000))
+      .sort((a, b) => new Date(a.utc) - new Date(b.utc));
+    let anchorId = null;
+    for (let i = locked.length - 1; i >= 0; i--) {
+      if (results[locked[i].id] === undefined) { anchorId = locked[i].id; break; }
+    }
+    let lastLabel = null;
+    locked.forEach(m => {
+      if (m.id === anchorId) {
+        html += '<div id="adminResultAnchor" style="scroll-margin-top:80px;"></div>';
+      }
+      const label = matchDateLabel(m.utc);
+      if (label !== lastLabel) {
+        html += `<div class="group-label">${label}</div>`;
+        lastLabel = label;
+      }
+      html += buildAdminCard(m);
+    });
+    if (!anchorId) {
+      html += '<div id="adminResultAnchor" style="scroll-margin-top:80px;"></div>';
+      html += '<div style="color:var(--text3);font-size:12px;padding:8px 0;">All results confirmed.</div>';
+    }
+  }
+
+  if (!html) html = '<div style="color:var(--text3);font-size:13px;padding:10px 0;">No locked matches yet, or no search results.</div>';
+  container.innerHTML = html;
+}
+
+function scrollToAdminAnchor() {
+  requestAnimationFrame(() => {
+    const el = document.getElementById('adminResultAnchor');
+    if (el) el.scrollIntoView({ behavior: 'instant', block: 'start' });
+  });
+}
+
+function renderAdminPlayers() {
+  const db = getDB();
+  const container = document.getElementById('adminPlayerList');
+  if (!db.players) return;
+  container.innerHTML = Object.entries(db.players).map(([key, p]) => {
+    const stats = calcPlayerStats(key);
+    return `<div class="player-admin-row">
+      <div class="player-admin-name">${p.name}${p.isAdmin ? ' ★' : ''}</div>
+      <div class="player-admin-meta">${stats.pts} pts &nbsp;|&nbsp; Joined ${new Date(p.joined).toLocaleDateString('en-GB')}</div>
+      <button class="btn-warning" onclick="resetPlayer('${key}','${escapeHtml(p.name)}')">Reset</button>
+      ${!p.isAdmin ? `<button class="btn-danger" onclick="removePlayer('${key}','${escapeHtml(p.name)}')">Remove</button>` : ''}
+    </div>`;
+  }).join('');
+}
+
+async function confirmResult(matchId, home, away) {
+  const h = parseInt(document.getElementById(`ar_h_${matchId}`).value);
+  const a = parseInt(document.getElementById(`ar_a_${matchId}`).value);
+  if (isNaN(h) || isNaN(a)) { showToast('Enter both scores', 'error'); return; }
+  try {
+    await safeMutate(db => { db.results[matchId] = { home: h, away: a }; });
+    showToast(`Result saved: ${home} ${h}-${a} ${away}`, 'success');
+    renderAdminMatches();
+  } catch(e) { showToast('Save failed. Try again.', 'error'); }
+}
+
+async function clearResult(matchId) {
+  openModal('Clear Result', 'Remove this final score? Player points will be recalculated.', async () => {
+    try {
+      await safeMutate(db => { if (db.results) delete db.results[matchId]; });
+      showToast('Result cleared', 'success');
+      renderAdminMatches();
+    } catch(e) { showToast('Clear failed. Try again.', 'error'); }
+  });
+}
+
+async function recalcAll() {
+  // Points are always calculated live from db.results and db.predictions
+  // This just re-fetches the latest data and refreshes the view
+  await loadDB();
+  showToast('Leaderboard recalculated', 'success');
+  renderAdmin();
+}
+
+async function exportData() {
+  try {
+    // Pull the freshest copy so the backup is current
+    const fresh = await fetchDB();
+    const payload = {
+      _backup: 'wc2026-predictor',
+      _version: 1,
+      _exportedAt: new Date().toISOString(),
+      data: fresh,
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const stamp = new Date().toISOString().slice(0,16).replace(/[:T]/g,'-');
+    a.href = url;
+    a.download = `wc2026-backup-${stamp}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    showToast('Backup downloaded', 'success');
+  } catch(e) {
+    showToast('Backup failed. Try again.', 'error');
+  }
+}
+
+function importData(event) {
+  const file = event.target.files && event.target.files[0];
+  event.target.value = ''; // reset so the same file can be picked again later
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    let parsed;
+    try {
+      parsed = JSON.parse(reader.result);
+    } catch(e) {
+      showToast('That file is not valid JSON', 'error'); return;
+    }
+    const data = (parsed && parsed._backup === 'wc2026-predictor' && parsed.data) ? parsed.data : parsed;
+    if (!data || typeof data !== 'object' || !data.players) {
+      showToast('That does not look like a WC2026 backup', 'error'); return;
+    }
+    const playerCount = Object.keys(data.players).length;
+    const resultCount = data.results ? Object.keys(data.results).length : 0;
+    openModal('Restore from backup?',
+      `This replaces everything currently in the app with the backup: ${playerCount} players and ${resultCount} results. This cannot be undone. Continue?`,
+      async () => {
+        try {
+          await safeMutate(db => {
+            // Replace each top-level section wholesale
+            db.players = data.players || {};
+            db.predictions = data.predictions || {};
+            db.results = data.results || {};
+            db.teamOverrides = data.teamOverrides || {};
+            db.settings = data.settings || {};
+          });
+          // Re-apply team overrides to the live MATCHES array
+          const db = getDB();
+          MATCHES.forEach(m => {
+            if (db.teamOverrides[m.id + '_h'] !== undefined) m.home = db.teamOverrides[m.id + '_h'];
+            else m.home = m.origHome;
+            if (db.teamOverrides[m.id + '_a'] !== undefined) m.away = db.teamOverrides[m.id + '_a'];
+            else m.away = m.origAway;
+          });
+          showToast('Backup restored', 'success');
+          renderAdmin();
+        } catch(e) {
+          showToast('Restore failed. Try again.', 'error');
+        }
+      });
+  };
+  reader.onerror = () => showToast('Could not read that file', 'error');
+  reader.readAsText(file);
+}
+
+
+function resetPlayer(key, name) {
+  openModal('Reset Player', `Clear all predictions for ${name}? Their account remains but all predictions are wiped.`, async () => {
+    try {
+      await safeMutate(db => { if (db.predictions) delete db.predictions[key]; });
+      showToast(`${name} predictions reset`, 'success');
+      renderAdminPlayers();
+    } catch(e) { showToast('Reset failed. Try again.', 'error'); }
+  });
+}
+
+function removePlayer(key, name) {
+  openModal('Remove Player', `Permanently remove ${name}? This deletes their account and all predictions.`, async () => {
+    try {
+      await safeMutate(db => {
+        if (db.players) delete db.players[key];
+        if (db.predictions) delete db.predictions[key];
+      });
+      showToast(`${name} removed`, 'success');
+      renderAdminPlayers();
+    } catch(e) { showToast('Remove failed. Try again.', 'error'); }
+  });
+}
+
+// ─── MODAL ───────────────────────────────────────────────────────────────────
+let _modalCb = null;
+function openModal(title, desc, cb) {
+  document.getElementById('modalTitle').textContent = title;
+  document.getElementById('modalDesc').textContent = desc;
+  _modalCb = cb;
+  document.getElementById('confirmModal').classList.add('show');
+  document.getElementById('modalConfirmBtn').onclick = () => { closeModal(); if (_modalCb) _modalCb(); };
+}
+function closeModal() { document.getElementById('confirmModal').classList.remove('show'); }
+
+// ─── TOAST ───────────────────────────────────────────────────────────────────
+let _toastTimer;
+function showToast(msg, type = '') {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = 'toast show' + (type ? ' ' + type : '');
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => el.classList.remove('show'), 2800);
+}
+
+// ─── UTILS ───────────────────────────────────────────────────────────────────
+function normName(name) { return name.trim().toLowerCase().replace(/\s+/g, '_'); }
+function initials(name) { return name.split(/[\s_]+/).map(w=>w[0]||'').join('').toUpperCase().slice(0,2); }
+function hashPin(pin) {
+  // Simple deterministic hash (not cryptographic, fine for a social game)
+  let h = 5381;
+  for (let i = 0; i < pin.length; i++) h = ((h << 5) + h) ^ pin.charCodeAt(i);
+  return (h >>> 0).toString(36);
+}
+function escapeHtml(str) { return str.replace(/'/g,"&#39;").replace(/"/g,"&quot;"); }
+
+async function refreshLeaderboard() {
+  const btn = document.getElementById('refreshBtn');
+  if (btn) { btn.classList.add('spinning'); btn.textContent = 'Refreshing...'; btn.disabled = true; }
+  _clearCache();
+  await loadDB(true);
+  renderLeaderboard();
+  if (btn) { btn.classList.remove('spinning'); btn.textContent = 'Refresh'; btn.disabled = false; }
+}
+
+// Auto-refresh kept at 24 hours as a safety net. Players use the Refresh button instead.
+setInterval(async () => {
+  if (currentPage === 'leaderboard'
+      && document.getElementById('appScreen').style.display !== 'none'
+      && document.visibilityState === 'visible') {
+    await loadDB();
+    renderLeaderboard();
+  }
+}, 86400000);
+</script>
+</body>
+</html>
