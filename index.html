@@ -2542,14 +2542,7 @@ function showToast(message, type) {
 }
 
 // ─── UTILS ───────────────────────────────────────────────────────────────────
-function escapeHtml(str) {
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
-</script>
-</body>
-</html>
+function normName(name) { return name.trim().toLowerCase().replace(/\s+/g, '_'); }
+function initials(name) { return name.split(/[\s_]+/).map(w=>w[0]||'').join('').toUpperCase().slice(0,2); }
+function hashPin(pin) {
+  // Si
